@@ -1580,7 +1580,7 @@
         }
 
         function selectAllTerritories() {
-            if (!isEditor) return;
+            // Remove the editor check - allow in both modes
             if (!territoryChoices || !allTerritoriesList.length) return;
             territoryChoices.setValue([...allTerritoriesList]);
             applyFiltersFast();
@@ -1588,7 +1588,7 @@
         }
 
         function clearAllAndResetView() {
-            if (!isEditor) return;
+            // Remove the editor check - allow in both modes
             territoryChoices?.removeActiveItems();
             document.getElementById("statusFilter").value = "ALL";
             applyFiltersFast();
@@ -1876,7 +1876,7 @@
             // 🔥 LOAD EVERYTHING IN SEQUENCE WITH PROPER MESSAGES
             try {
                 // Step 1: Load Boundary
-                showLoading("Loading boundary layer...");
+                showLoading("Loading...");
                 await loadBoundaryLayer();
                 console.log("✅ Boundary loaded");
 
