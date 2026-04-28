@@ -1149,6 +1149,16 @@
             }
         });
         function loginAsViewer() {
+            window._justLoggedIn = true;
+
+            // Clear IndexedDB cache
+            try {
+                if (cacheDB && cacheDB.db) {
+                    const tx = cacheDB.db.transaction([cacheDB.storeName], 'readwrite');
+                    tx.objectStore(cacheDB.storeName).clear();
+                    console.log("✅ Cache cleared on fresh login");
+                }
+            } catch (e) { }
             isEditor = false;
             document.getElementById('loginOverlay').style.display = 'none';
             document.getElementById('mainApp').style.display = 'flex';
@@ -1213,6 +1223,16 @@
         }
 
         function loginAsEditor() {
+            window._justLoggedIn = true;
+
+            // Clear IndexedDB cache
+            try {
+                if (cacheDB && cacheDB.db) {
+                    const tx = cacheDB.db.transaction([cacheDB.storeName], 'readwrite');
+                    tx.objectStore(cacheDB.storeName).clear();
+                    console.log("✅ Cache cleared on fresh login");
+                }
+            } catch (e) { }
             isEditor = true;
             document.getElementById('loginOverlay').style.display = 'none';
             document.getElementById('mainApp').style.display = 'flex';
@@ -1536,7 +1556,23 @@
         }
 
         function applyFiltersFast() { if (window.filterDebounce) clearTimeout(window.filterDebounce); window.filterDebounce = setTimeout(() => refreshAllStyles(), 50); }
-        function zoomToSelectedTerritories() { const selected = territoryChoices?.getValue(true) || []; if (!selected.length) { map.fitBounds(CONTINENTAL_BOUNDS); return; } const bounds = L.latLngBounds(); currentGeoLayer?.eachLayer(layer => { const territoryName = layer.feature.properties.Territory_ || layer.feature.properties.Territory; if (selected.includes(territoryName)) bounds.extend(layer.getBounds()); }); if (bounds.isValid()) map.fitBounds(bounds, { padding: [50, 50] }); }
+        function zoomToSelectedTerritories() {
+            const selected = territoryChoices?.getValue(true) || [];
+            if (!selected.length) {
+                map.flyToBounds(CONTINENTAL_BOUNDS, { duration: 0.5 });
+                return;
+            }
+            const bounds = L.latLngBounds();
+            currentGeoLayer?.eachLayer(layer => {
+                const territoryName = layer.feature.properties.Territory_ || layer.feature.properties.Territory;
+                if (selected.includes(territoryName)) bounds.extend(layer.getBounds());
+            });
+            if (bounds.isValid()) {
+                setTimeout(() => {
+                    map.flyToBounds(bounds, { padding: [50, 50], duration: 0.5 });
+                }, 100);
+            }
+        }
 
         function selectAllTerritories() {
             if (!isEditor) return;
@@ -1606,13 +1642,57 @@
             refreshLabelClickHandlers();  // This will add click handlers for both modes
             updateLabelsVisibility();
         }
-        async function loadBoundaryLayer() { if (boundaryLayer) map.removeLayer(boundaryLayer); boundaryLayer = L.geoJSON(SIMPLE_BOUNDARY, { style: { color: "#FF8C00", weight: 3, fillOpacity: 0, opacity: 1 }, interactive: false }).addTo(map); boundaryLayer.bringToFront(); fetchGeoJSONWithCache(BOUNDARY_URL, "BOUNDARY_LAYER").then(geoData => { if (geoData && boundaryLayer) { map.removeLayer(boundaryLayer); boundaryLayer = L.geoJSON(geoData, { style: { color: "#FF8C00", weight: 3, fillOpacity: 0, opacity: 1 }, interactive: false }).addTo(map); boundaryLayer.bringToFront(); } }).catch(() => console.log("Using simple boundary")); }
+        async function loadBoundaryLayer() {
+            return new Promise(async (resolve) => {
+                try {
+                    const geoData = await fetchGeoJSONWithCache(BOUNDARY_URL, "");
+                    if (geoData && geoData.features) {
+                        // Remove old boundary if exists
+                        if (boundaryLayer) map.removeLayer(boundaryLayer);
+                        // Create AND add to map
+                        boundaryLayer = L.geoJSON(geoData, {
+                            style: { color: "#FF8C00", weight: 3, fillOpacity: 0, opacity: 1 },
+                            interactive: false
+                        }).addTo(map);  // 🔥 ADD TO MAP
+                        boundaryLayer.bringToFront();
+                        console.log("✅ Boundary layer added to map");
+                    } else {
+                        // Fallback to simple boundary
+                        if (boundaryLayer) map.removeLayer(boundaryLayer);
+                        boundaryLayer = L.geoJSON(SIMPLE_BOUNDARY, {
+                            style: { color: "#FF8C00", weight: 3, fillOpacity: 0, opacity: 1 },
+                            interactive: false
+                        }).addTo(map);  // 🔥 ADD TO MAP
+                        boundaryLayer.bringToFront();
+                        console.log("✅ Simple boundary added to map");
+                    }
+                } catch (e) {
+                    console.log("Error loading boundary, using simple boundary", e);
+                    if (boundaryLayer) map.removeLayer(boundaryLayer);
+                    boundaryLayer = L.geoJSON(SIMPLE_BOUNDARY, {
+                        style: { color: "#FF8C00", weight: 3, fillOpacity: 0, opacity: 1 },
+                        interactive: false
+                    }).addTo(map);  // 🔥 ADD TO MAP
+                    boundaryLayer.bringToFront();
+                }
+                resolve();
+            });
+        }
 
         async function loadGeoJSON(url, isNursing = false) {
             const datasetKey = isNursing ? "NURSING" : "ALLIED";
             showLoading(`Loading ${datasetKey}...`);
             try {
-                let geoData = await fetchGeoJSONWithCache(url, datasetKey);
+                // 🔥 REPLACE with this
+                let geoData;
+                if (window._justLoggedIn) {
+                    console.log("Fresh login - fetching without cache");
+                    const response = await fetch(url + "?_cb=" + Date.now(), { cache: "reload" });
+                    geoData = await response.json();
+                    window._justLoggedIn = false;
+                } else {
+                    geoData = await fetchGeoJSONWithCache(url, datasetKey);
+                }
                 const savedStatuses = await loadFromSheet();
                 for (let feat of geoData.features) {
                     if (!feat.properties) feat.properties = {};
@@ -1651,7 +1731,6 @@
                 }
                 addTerritoryLabels();
                 refreshAllStyles();
-                map.fitBounds(CONTINENTAL_BOUNDS);
                 hideLoading();
                 showToast(`✅ ${datasetKey} ready`);
                 ensureBoundaryOnTop();
@@ -1697,15 +1776,78 @@
         }
 
         async function initMapAndControls() {
-            map = L.map('map', { zoomSnap: 0.5, zoomDelta: 0.5, zoomControl: true, maxZoom: 24, minZoom: 3 }).setView([39.5, -98.5], 5);
-            L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', { attribution: '&copy; OSM & CartoDB', subdomains: 'abcd', maxZoom: 24 }).addTo(map);
+            // 🔥 SHOW LOADING SCREEN - Pehle se dikhao
+            showLoading("Initializing map...");
+
+            console.log("🔄 Starting fresh map initialization...");
+
+            // Destroy existing map if any
+            if (map) {
+                try {
+                    map.off();
+                    map.remove();
+                } catch (e) { }
+                map = null;
+            }
+
+            // Destroy Choices instance
+            if (territoryChoices) {
+                try {
+                    territoryChoices.destroy();
+                } catch (e) { }
+                territoryChoices = null;
+            }
+
+            // Clear select element
+            const territorySelect = document.getElementById('territorySearch');
+            if (territorySelect) {
+                for (let i = territorySelect.options.length - 1; i >= 0; i--) {
+                    territorySelect.remove(i);
+                }
+            }
+
+            // Clear globals
+            allTerritoriesList = [];
+            territoryLabelsArray = [];
+            territoryPolygonsMap.clear();
+            currentGeoLayer = null;
+            boundaryLayer = null;
+
+            // Create NEW map
+            map = L.map('map', {
+                zoomSnap: 0.5,
+                zoomDelta: 0.5,
+                zoomControl: true,
+                maxZoom: 24,
+                minZoom: 3,
+                fadeAnimation: true,
+                zoomAnimation: true,
+                markerZoomAnimation: true
+            }).setView([39.5, -98.5], 5);
+
+            // Add tile layer
+            L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
+                attribution: '&copy; OSM & CartoDB',
+                subdomains: 'abcd',
+                maxZoom: 24,
+                maxNativeZoom: 19,
+                updateWhenIdle: true,
+                updateWhenZooming: false
+            }).addTo(map);
 
             setupZoomOptimizations();
 
-            territoryChoices = new Choices('#territorySearch', { removeItemButton: true, placeholderValue: '🔍 Search territory...', searchEnabled: true, searchChoices: true, shouldSort: false, itemSelectText: '' });
+            // Create Choices instance
+            territoryChoices = new Choices('#territorySearch', {
+                removeItemButton: true,
+                placeholderValue: '🔍 Search territory...',
+                searchEnabled: true,
+                searchChoices: true,
+                shouldSort: false,
+                itemSelectText: ''
+            });
 
-
-
+            // Event listeners
             document.getElementById("territorySearch").addEventListener('change', () => {
                 applyFiltersFast();
                 setTimeout(() => zoomToSelectedTerritories(), 150);
@@ -1713,7 +1855,6 @@
             document.getElementById("statusFilter").addEventListener("change", () => applyFiltersFast());
             document.getElementById("resetMap").addEventListener("click", () => {
                 map.fitBounds(CONTINENTAL_BOUNDS);
-                ensureBoundaryOnTop();
                 refreshMapSize();
             });
             document.getElementById("markOpenBtn").addEventListener("click", () => markVisibleAs(getOpenStatusName()));
@@ -1726,13 +1867,118 @@
             document.getElementById("goToAllied").addEventListener("click", switchToAllied);
 
             updateUIForDataset();
-            await loadBoundaryLayer();
-            await loadGeoJSON(ALLIED_URL, false);
-            await loadGoogleSheetLinks();
-            ensureBoundaryOnTop();
-            refreshMapSize();
-        }
 
+            // 🔥 LOAD EVERYTHING IN SEQUENCE WITH PROPER MESSAGES
+            try {
+                // Step 1: Load Boundary
+                showLoading("Loading boundary layer...");
+                await loadBoundaryLayer();
+                console.log("✅ Boundary loaded");
+
+                // Step 2: Load Allied territories
+                showLoading("Loading Allied territories...");
+                await loadGeoJSON(ALLIED_URL, false);
+                console.log("✅ Allied territories loaded");
+
+                // Step 3: Load document links
+                showLoading("Loading document links...");
+                await loadGoogleSheetLinks();
+                console.log("✅ Document links loaded");
+
+                // 🔥 Sab load ho gaya - ab map fit karo
+                console.log("✅ All data loaded successfully");
+
+                // Ensure boundary is on top
+                if (boundaryLayer) {
+                    boundaryLayer.bringToFront();
+                }
+
+                // Refresh everything
+                refreshAllStyles();
+                refreshMapSize();
+
+                // Finally fit bounds to show complete map
+                map.fitBounds(CONTINENTAL_BOUNDS);
+
+                // 🔥 HIDE LOADING SCREEN
+                hideLoading();
+                showToast("✅ Map ready!", false);
+
+            } catch (error) {
+                console.error("Error loading map:", error);
+                hideLoading();
+                showToast("❌ Error loading map! Please refresh.", true);
+            }
+        }
+        // ========== HEADER LOGOUT BUTTON ==========
+        const headerLogoutBtn = document.getElementById('headerLogoutBtn');
+        if (headerLogoutBtn) {
+            const newBtn = headerLogoutBtn.cloneNode(true);
+            headerLogoutBtn.parentNode.replaceChild(newBtn, headerLogoutBtn);
+            newBtn.addEventListener('click', function () {
+                // Complete cleanup
+                if (map) {
+                    map.eachLayer(function (layer) {
+                        if (layer instanceof L.TileLayer) {
+                            if (layer._tiles) {
+                                Object.keys(layer._tiles).forEach(function (key) {
+                                    delete layer._tiles[key];
+                                });
+                            }
+                        }
+                        map.removeLayer(layer);
+                    });
+                    map.off();
+                    map.remove();
+                    map = null;
+                }
+
+                if (territoryChoices) {
+                    try { territoryChoices.destroy(); } catch (e) { }
+                    territoryChoices = null;
+                }
+
+                const territorySelect = document.getElementById('territorySearch');
+                if (territorySelect) {
+                    for (let i = territorySelect.options.length - 1; i >= 0; i--) {
+                        territorySelect.remove(i);
+                    }
+                }
+
+                currentGeoLayer = null;
+                boundaryLayer = null;
+                allTerritoriesList = [];
+                territoryLabelsArray = [];
+                territoryPolygonsMap.clear();
+                territoryLinkMap.clear();
+
+                localStorage.removeItem('territory_links_cache');
+                sessionStorage.clear();
+
+                try {
+                    if (cacheDB && cacheDB.db) {
+                        const tx = cacheDB.db.transaction([cacheDB.storeName], 'readwrite');
+                        tx.objectStore(cacheDB.storeName).clear();
+                    }
+                } catch (e) { }
+
+                const banner = document.getElementById('modeBanner');
+                if (banner) banner.remove();
+
+                document.getElementById('loginOverlay').style.display = 'flex';
+                document.getElementById('mainApp').style.display = 'none';
+
+                document.getElementById('editorUsername').value = '';
+                document.getElementById('editorPassword').value = '';
+                document.getElementById('errorMsg').classList.remove('show');
+
+                selectedMode = null;
+                document.querySelectorAll('.login-option').forEach(opt => opt.classList.remove('selected'));
+                document.getElementById('passwordSection').classList.remove('show');
+
+                showToast("Logged out successfully", false);
+            });
+        }
         // Note: initMapAndControls will be called after login (viewer or editor)
     </script>
 
