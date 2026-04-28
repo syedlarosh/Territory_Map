@@ -147,6 +147,14 @@
             color: var(--primary);
         }
 
+        .default-viewer-mode .login-overlay {
+            display: none !important;
+        }
+
+        .default-viewer-mode #mainApp {
+            display: flex !important;
+        }
+
         .password-section {
             display: none;
             margin-top: 20px;
@@ -970,9 +978,8 @@
 </head>
 
 <body>
-    <!-- LOGIN OVERLAY -->
-    <!-- LOGIN OVERLAY -->
-    <div id="loginOverlay" class="login-overlay">
+    <!-- LOGIN OVERLAY (Hidden initially) -->
+    <div id="loginOverlay" class="login-overlay" style="display: none;">
         <div class="login-card">
             <img src="https://i4searchgroup.com/wp-content/uploads/2024/03/i4-LOGO-HEALTHCARE-RECRUITING-300x300-1-1-1-300x90.png"
                 style="height: 50px; margin-bottom: 20px;">
@@ -995,14 +1002,12 @@
                 <input type="password" id="editorPassword" class="password-input" placeholder="Enter Password">
                 <button id="loginBtn" class="login-btn">Login as Editor</button>
                 <div id="errorMsg" class="error-msg"></div>
-
-                <!-- FORGOT PASSWORD SECTION FULLY REMOVED - No button, no email input -->
             </div>
         </div>
     </div>
 
-    <!-- MAIN APP (Hidden until login) -->
-    <div id="mainApp" style="display: none;">
+    <!-- MAIN APP (Visible initially in viewer mode) -->
+    <div id="mainApp" style="display: flex; flex-direction: column; height: 100vh;">
         <div id="header">
             <div class="logo-area">
                 <img src="https://i4searchgroup.com/wp-content/uploads/2024/03/i4-LOGO-HEALTHCARE-RECRUITING-300x300-1-1-1-300x90.png"
@@ -1979,7 +1984,11 @@
                 showToast("Logged out successfully", false);
             });
         }
-        // Note: initMapAndControls will be called after login (viewer or editor)
+        // Auto-start in viewer mode when page loads
+        window.addEventListener('DOMContentLoaded', function () {
+            // Automatically start in viewer mode
+            loginAsViewer();
+        });
     </script>
 
 </body>
